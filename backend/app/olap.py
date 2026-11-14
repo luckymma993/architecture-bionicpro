@@ -31,11 +31,19 @@ def fetch_report(username: str, date_from: date, date_to: date) -> dict:
         """,
         parameters={"username": username, "date_from": date_from, "date_to": date_to},
     ).result_rows
+    processed = processed_through if processed_through and processed_through.year > 1970 else None
+    beyond = processed is None or date_to > processed
     return {
         "username": username,
         "date_from": date_from.isoformat(),
         "date_to": date_to.isoformat(),
-        "processed_through": processed_through.isoformat() if processed_through and processed_through.year > 1970 else None,
+        "processed_through": processed.isoformat() if processed else None,
+        "partial": beyond,
+        "message": (
+            "Часть периода ещё не обработана, отчёт показан только за обработанные дни"
+            if beyond
+            else None
+        ),
         "days": [
             {
                 "date": r[0].isoformat(),

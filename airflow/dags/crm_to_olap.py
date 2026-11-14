@@ -35,18 +35,21 @@ def olap_client():
 )
 def crm_to_olap():
     @task
-    def extract_crm():
+    def load_crm():
         with source_connection() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT id, username, full_name, country, prosthesis_model FROM crm.customers"
             )
-            return [
-                {"id": r[0], "username": r[1], "full_name": r[2], "country": r[3], "model": r[4]}
-                for r in cur.fetchall()
-            ]
+            rows = [list(r) for r in cur.fetchall()]
+        olap_client().insert(
+            "reports.crm_customers",
+            rows,
+            column_names=["customer_id", "username", "full_name", "country", "prosthesis_model"],
+        )
+        return len(rows)
 
     @task
-    def extract_telemetry(data_interval_start=None, data_interval_end=None):
+    def load_telemetry(data_interval_start=None, data_interval_end=None):
         with source_connection() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -62,50 +65,18 @@ def crm_to_olap():
                 """,
                 (data_interval_start, data_interval_end),
             )
-            return {
-                r[0]: {
-                    "signals": int(r[1]),
-                    "movements": int(r[2]),
-                    "avg_response_ms": float(r[3]),
-                    "errors": int(r[4]),
-                    "min_battery": int(r[5]),
-                }
+            report_date = data_interval_start.date()
+            rows = [
+                [report_date, r[0], int(r[1]), int(r[2]), float(r[3]), int(r[4]), int(r[5])]
                 for r in cur.fetchall()
-            }
-
-    @task
-    def join_and_load(customers, telemetry, data_interval_start=None):
-        report_date = data_interval_start.date()
-        rows = []
-        for c in customers:
-            t = telemetry.get(str(c["id"])) or telemetry.get(c["id"])
-            if not t:
-                continue
-            rows.append(
-                [
-                    report_date,
-                    c["username"],
-                    c["full_name"],
-                    c["country"],
-                    c["model"],
-                    t["signals"],
-                    t["movements"],
-                    t["avg_response_ms"],
-                    t["errors"],
-                    t["min_battery"],
-                ]
-            )
-        client = olap_client()
+            ]
         if rows:
-            client.insert(
-                "reports.user_daily_report",
+            olap_client().insert(
+                "reports.telemetry_daily",
                 rows,
                 column_names=[
                     "report_date",
-                    "username",
-                    "full_name",
-                    "country",
-                    "prosthesis_model",
+                    "customer_id",
                     "signals_count",
                     "movements",
                     "avg_response_ms",
@@ -113,14 +84,34 @@ def crm_to_olap():
                     "min_battery_pct",
                 ],
             )
-        client.insert(
-            "reports.processed_days",
-            [[report_date]],
-            column_names=["report_date"],
-        )
         return len(rows)
 
-    join_and_load(extract_crm(), extract_telemetry())
+    @task
+    def build_mart(data_interval_start=None):
+        report_date = data_interval_start.date()
+        olap_client().command(
+            """
+            INSERT INTO reports.user_daily_report
+                (report_date, username, full_name, country, prosthesis_model,
+                 signals_count, movements, avg_response_ms, errors, min_battery_pct)
+            SELECT t.report_date, c.username, c.full_name, c.country, c.prosthesis_model,
+                   t.signals_count, t.movements, t.avg_response_ms, t.errors, t.min_battery_pct
+            FROM reports.telemetry_daily AS t FINAL
+            INNER JOIN reports.crm_customers AS c FINAL ON c.customer_id = t.customer_id
+            WHERE t.report_date = {report_date:Date}
+            """,
+            parameters={"report_date": report_date},
+        )
+
+    @task
+    def mark_processed(data_interval_start=None):
+        olap_client().insert(
+            "reports.processed_days",
+            [[data_interval_start.date()]],
+            column_names=["report_date"],
+        )
+
+    [load_crm(), load_telemetry()] >> build_mart() >> mark_processed()
 
 
 crm_to_olap()

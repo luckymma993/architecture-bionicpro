@@ -15,6 +15,8 @@ interface ReportData {
   date_from: string;
   date_to: string;
   processed_through: string | null;
+  partial: boolean;
+  message: string | null;
   days: ReportDay[];
 }
 
@@ -91,6 +93,7 @@ const ReportPage: React.FC = () => {
           <table className="mt-4 text-sm border-collapse">
             <caption className="mb-2 text-left text-gray-600">
               {report.username}: данные обработаны по {report.processed_through ?? 'нет данных'}
+              {report.message && <div className="text-amber-700">{report.message}</div>}
             </caption>
             <thead>
               <tr>

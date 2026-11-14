@@ -4,7 +4,7 @@
 
 | Путь | Содержимое |
 |------|-----------|
-| `Task2/BionicPRO_reports_architecture.drawio`, `.png` | Схема: Airflow ETL, ClickHouse, Reports API |
+| `Task2/BionicPRO_reports_architecture.drawio`, `.png` | Схема: Airflow ETL, ClickHouse и API на основе исходной C4-диаграммы |
 | `airflow/` | Образ Airflow и DAG `dags/crm_to_olap.py` |
 | `sources/` | Схемы и данные CRM и телеметрии (PostgreSQL) |
 | `clickhouse/init.sql` | Витрина `user_daily_report` и таблица `processed_days` |
@@ -14,9 +14,9 @@
 
 ## Как работает
 
-1. DAG `crm_to_olap` запускается ежедневно (`catchup=True` догоняет дни с 1 ноября 2026). Он читает клиентов из CRM и суточную телеметрию, объединяет их и пишет одну строку на клиента и день в `reports.user_daily_report`. Последним шагом день записывается в `reports.processed_days`.
+1. DAG `crm_to_olap` запускается ежедневно (`catchup=True` догоняет дни с 1 ноября 2026). Задачи: `load_crm` копирует клиентов из CRM в `reports.crm_customers`, `load_telemetry` агрегирует телеметрию за сутки по клиентам в `reports.telemetry_daily`, `build_mart` объединяет их запросом `INSERT ... SELECT ... JOIN` в витрину `reports.user_daily_report` (строка на клиента и день), `mark_processed` записывает день в `reports.processed_days`.
 2. `GET /reports?date_from=&date_to=` берёт имя пользователя только из проверенного токена Keycloak. Без токена ответ 401, без роли `prothetic_user` ответ 403.
-3. Запрос объединяет витрину с `processed_days`, поэтому в отчёт попадают только дни, которые Airflow уже обработал. Дата последнего обработанного дня возвращается в поле `processed_through`.
+3. Запрос объединяет витрину с `processed_days`, поэтому в отчёт попадают только дни, которые Airflow уже обработал. Дата последнего обработанного дня возвращается в поле `processed_through`, а если запрошенный период выходит за неё, ответ содержит `partial: true` и сообщение, а интерфейс показывает предупреждение.
 4. Повторный запуск DAG за тот же день не создаёт дублей: таблицы ReplacingMergeTree читаются с `FINAL`.
 
 ## Запуск
