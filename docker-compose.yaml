@@ -29,6 +29,67 @@ services:
       - "8080:8080"
     depends_on:
       - keycloak_db
+  source_db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: source
+      POSTGRES_USER: source_user
+      POSTGRES_PASSWORD: source_password
+    volumes:
+      - ./sources:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5434:5432"
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_USER: olap_user
+      CLICKHOUSE_PASSWORD: olap_password
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "18123:8123"
+  airflow:
+    build:
+      context: ./airflow
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://source_user:source_password@source_db:5432/airflow
+      SOURCE_DB_HOST: source_db
+      SOURCE_DB_NAME: source
+      SOURCE_DB_USER: source_user
+      SOURCE_DB_PASSWORD: source_password
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_USER: olap_user
+      CLICKHOUSE_PASSWORD: olap_password
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.com;
+      airflow scheduler & exec airflow webserver"
+    ports:
+      - "18081:8080"
+    depends_on:
+      - source_db
+      - clickhouse
+  reports_api:
+    build:
+      context: ./backend
+    environment:
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/reports-realm
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/reports-realm/protocol/openid-connect/certs
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_USER: olap_user
+      CLICKHOUSE_PASSWORD: olap_password
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - keycloak
+      - clickhouse
   frontend:
     build:
       context: ./frontend
