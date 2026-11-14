@@ -12,6 +12,10 @@
 | `frontend/src/components/ReportPage.tsx` | Кнопка Download Report и таблица отчёта |
 | `Task2/check_api.py` | Проверка API: вход по PKCE, запросы за разных пользователей |
 
+## Допущения стенда
+
+CRM DB (Oracle на исходной диаграмме) и база телеметрии (PostgreSQL) эмулируются схемами `crm` и `telemetry` одного PostgreSQL в `sources/`. Данные телеметрии сгенерированы за 1–14 ноября 2026.
+
 ## Как работает
 
 1. DAG `crm_to_olap` запускается ежедневно (`catchup=True` догоняет дни с 1 ноября 2026). Задачи: `load_crm` копирует клиентов из CRM в `reports.crm_customers`, `load_telemetry` агрегирует телеметрию за сутки по клиентам в `reports.telemetry_daily`, `build_mart` объединяет их запросом `INSERT ... SELECT ... JOIN` в витрину `reports.user_daily_report` (строка на клиента и день), `mark_processed` записывает день в `reports.processed_days`.
