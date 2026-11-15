@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { useKeycloak } from '@react-keycloak/web';
+import React, { useEffect, useState } from 'react';
+
+const BFF = process.env.REACT_APP_BFF_URL || 'http://localhost:8001';
 
 interface ReportDay {
   date: string;
@@ -21,29 +22,31 @@ interface ReportData {
 }
 
 const ReportPage: React.FC = () => {
-  const { keycloak, initialized } = useKeycloak();
+  const [initialized, setInitialized] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ReportData | null>(null);
 
-  const downloadReport = async () => {
-    if (!keycloak?.token) {
-      setError('Not authenticated');
-      return;
-    }
+  useEffect(() => {
+    fetch(`${BFF}/auth/me`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((me) => setUsername(me.authenticated ? me.username : null))
+      .catch(() => setUsername(null))
+      .finally(() => setInitialized(true));
+  }, []);
 
+  const downloadReport = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      await keycloak.updateToken(30);
+      const response = await fetch(`${BFF}/reports`, { credentials: 'include' });
 
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/reports`, {
-        headers: {
-          'Authorization': `Bearer ${keycloak.token}`
-        }
-      });
-
+      if (response.status === 401) {
+        setUsername(null);
+        return;
+      }
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail || `Ошибка ${response.status}`);
@@ -57,19 +60,25 @@ const ReportPage: React.FC = () => {
     }
   };
 
+  const logout = async () => {
+    await fetch(`${BFF}/auth/logout`, { method: 'POST', credentials: 'include' });
+    setUsername(null);
+    setReport(null);
+  };
+
   if (!initialized) {
     return <div>Loading...</div>;
   }
 
-  if (!keycloak.authenticated) {
+  if (!username) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
-        <button
-          onClick={() => keycloak.login()}
+        <a
+          href={`${BFF}/auth/login`}
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
         >
           Login
-        </button>
+        </a>
       </div>
     );
   }
@@ -78,6 +87,10 @@ const ReportPage: React.FC = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
       <div className="p-8 bg-white rounded-lg shadow-md">
         <h1 className="text-2xl font-bold mb-6">Usage Reports</h1>
+        <p className="mb-4 text-sm text-gray-600">
+          {username}{' '}
+          <button onClick={logout} className="underline">Выйти</button>
+        </p>
         
         <button
           onClick={downloadReport}

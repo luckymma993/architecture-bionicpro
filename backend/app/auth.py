@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 ISSUER = os.environ["KEYCLOAK_ISSUER"]
 JWKS_URL = os.environ["KEYCLOAK_JWKS_URL"]
 REQUIRED_ROLE = os.environ.get("REQUIRED_ROLE", "prothetic_user")
-ALLOWED_CLIENT = os.environ.get("ALLOWED_CLIENT", "reports-frontend")
+ALLOWED_CLIENTS = os.environ.get("ALLOWED_CLIENTS", "reports-bff,reports-frontend").split(",")
 
 bearer = HTTPBearer(auto_error=False)
 jwks_client = jwt.PyJWKClient(JWKS_URL, cache_keys=True)
@@ -27,7 +27,7 @@ def current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer)) ->
         )
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Недействительный токен")
-    if claims.get("azp") != ALLOWED_CLIENT:
+    if claims.get("azp") not in ALLOWED_CLIENTS:
         raise HTTPException(status_code=401, detail="Токен выдан другому клиенту")
     roles = claims.get("realm_access", {}).get("roles", [])
     if REQUIRED_ROLE not in roles:

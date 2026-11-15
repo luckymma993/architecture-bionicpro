@@ -124,6 +124,20 @@
         }
       },
       {
+        "clientId": "reports-bff",
+        "enabled": true,
+        "publicClient": false,
+        "clientAuthenticatorType": "client-secret",
+        "secret": "bff-dev-secret-change-me",
+        "redirectUris": ["http://localhost:8001/auth/callback"],
+        "standardFlowEnabled": true,
+        "implicitFlowEnabled": false,
+        "directAccessGrantsEnabled": false,
+        "attributes": {
+          "pkce.code.challenge.method": "S256"
+        }
+      },
+      {
         "clientId": "reports-api",
         "enabled": true,
         "clientAuthenticatorType": "client-secret",

@@ -1,27 +1,36 @@
-# Задание 2. Сервис отчётов
+# Задание 2. Отчёты по протезу
 
-## Файлы
+Пользователь нажимает кнопку и получает отчёт о работе своего протеза за выбранные дни. Отчёт строится не «на лету» из сырой телеметрии, а берётся из заранее подготовленной витрины в ClickHouse.
 
-| Путь | Содержимое |
-|------|-----------|
-| `Task2/BionicPRO_reports_architecture.drawio`, `.png` | Схема: Airflow ETL, ClickHouse и API на основе исходной C4-диаграммы |
+## Что где лежит
+
+| Путь | Что там |
+|------|---------|
+| `Task2/BionicPRO_reports_architecture.drawio`, `.png` | Схема (на основе исходной C4) |
 | `airflow/` | Образ Airflow и DAG `dags/crm_to_olap.py` |
-| `sources/` | Схемы и данные CRM и телеметрии (PostgreSQL) |
-| `clickhouse/init.sql` | Витрина `user_daily_report` и таблица `processed_days` |
-| `backend/` | Reports API на FastAPI, `GET /reports` |
-| `frontend/src/components/ReportPage.tsx` | Кнопка Download Report и таблица отчёта |
-| `Task2/check_api.py` | Проверка API: вход по PKCE, запросы за разных пользователей |
+| `sources/` | Данные CRM и телеметрии, которые Airflow забирает |
+| `clickhouse/init.sql` | Таблицы OLAP-витрины |
+| `backend/` | API на FastAPI, `GET /reports` |
+| `bff/` | BFF: ставит cookie сессии и ходит в API с токеном (подробнее в Task1) |
+| `frontend/` | Кнопка Download Report и таблица |
+| `Task2/check_api.py` | Скрипт проверки API |
 
-## Допущения стенда
+В настоящей системе CRM живёт в Oracle, а телеметрия в своей базе. Здесь обе замещены PostgreSQL со схемами `crm` и `telemetry` (`sources/`). Данные телеметрии сгенерированы за 1–14 ноября 2026.
 
-CRM DB (Oracle на исходной диаграмме) и база телеметрии (PostgreSQL) эмулируются схемами `crm` и `telemetry` одного PostgreSQL в `sources/`. Данные телеметрии сгенерированы за 1–14 ноября 2026.
+## Как это работает
 
-## Как работает
+Раз в сутки Airflow (DAG `crm_to_olap`) делает четыре шага:
 
-1. DAG `crm_to_olap` запускается ежедневно (`catchup=True` догоняет дни с 1 ноября 2026). Задачи: `load_crm` копирует клиентов из CRM в `reports.crm_customers`, `load_telemetry` агрегирует телеметрию за сутки по клиентам в `reports.telemetry_daily`, `build_mart` объединяет их запросом `INSERT ... SELECT ... JOIN` в витрину `reports.user_daily_report` (строка на клиента и день), `mark_processed` записывает день в `reports.processed_days`.
-2. `GET /reports?date_from=&date_to=` берёт имя пользователя только из проверенного токена Keycloak. Без токена ответ 401, без роли `prothetic_user` ответ 403.
-3. Запрос объединяет витрину с `processed_days`, поэтому в отчёт попадают только дни, которые Airflow уже обработал. Дата последнего обработанного дня возвращается в поле `processed_through`, а если запрошенный период выходит за неё, ответ содержит `partial: true` и сообщение, а интерфейс показывает предупреждение.
-4. Повторный запуск DAG за тот же день не создаёт дублей: таблицы ReplacingMergeTree читаются с `FINAL`.
+1. Копирует клиентов из CRM в ClickHouse.
+2. Считает телеметрию за прошедшие сутки по каждому клиенту и кладёт в ClickHouse.
+3. Объединяет клиентов и телеметрию в витрину `user_daily_report`: одна строка на клиента и день. Таблица отсортирована по имени пользователя, поэтому отчёт одного человека достаётся быстро.
+4. Отмечает день как обработанный в `processed_days`.
+
+DAG запущен с `catchup=True`, поэтому при первом старте сам догоняет все дни с 1 ноября. Повторный запуск за тот же день дублей не даёт.
+
+Запрос отчёта идёт так: браузер → BFF (cookie) → API (токен). API проверяет подпись токена по ключам Keycloak и берёт имя пользователя только из токена. Подсунуть чужое имя в параметрах нельзя, в запросе его просто нет. Без токена API отвечает 401, без роли `prothetic_user` отвечает 403.
+
+В отчёт попадают только дни, которые Airflow уже обработал. Если человек просит период, который ещё не обработан, он получает то, что есть, плюс пояснение: в ответе `partial: true`, а на странице появляется предупреждение.
 
 ## Запуск
 
@@ -29,25 +38,21 @@ CRM DB (Oracle на исходной диаграмме) и база телем�
 docker compose up -d --build
 ```
 
-| Сервис | Адрес |
-|--------|-------|
-| Frontend | http://localhost:3000 |
+| Что | Адрес |
+|-----|-------|
+| Приложение | http://localhost:3000 |
 | Keycloak | http://localhost:8080 (admin / admin) |
 | Airflow | http://localhost:18081 (admin / admin) |
-| Reports API | http://localhost:8000/docs |
-| ClickHouse HTTP | http://localhost:18123 |
+| API | http://localhost:8000/docs |
+| BFF | http://localhost:8001 |
+| ClickHouse | http://localhost:18123 |
 
-Пользователи для входа: `prothetic1`, `prothetic2`, `prothetic3` (пароль `prothetic123`). `user1` (пароль `password123`) входит, но отчёт не получает.
+Войти можно как `prothetic1`, `prothetic2` или `prothetic3` (пароль `prothetic123`). Пользователь `user1` (пароль `password123`) войти может, а отчёт не получит.
 
-После запуска Airflow сам обработает дни с 1 по 13 ноября. Проверка API:
+Airflow нужна минута-другая, чтобы обработать дни. Когда он закончит, можно проверять:
 
 ```bash
 python Task2/check_api.py
 ```
 
-## Результат проверки
-
-- без токена: 401;
-- неверный токен: 401;
-- `prothetic1` и `prothetic2`: по 13 дней, каждый видит только своё имя, `processed_through` = 2026-11-13;
-- `user1` без роли: 403.
+Если стенд поднимался раньше, а в Keycloak не появился клиент `reports-bff`, удалите папку `postgres-keycloak-data` и запустите заново: realm импортируется только на пустую базу.
